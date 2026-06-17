@@ -10,7 +10,7 @@ metadata:
   name: cad-module
   namespace: default
 spec: 
-  domain: c-5fcf4eb.stage.kyma.ondemand.com
+  # domain: c-5fcf4eb.stage.kyma.ondemand.com
   controlpanelAPI:
     image: ghcr.io/sap/controlpanel-api:latest
     deploymentManagerDBPassword: 
