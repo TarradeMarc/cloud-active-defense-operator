@@ -58,6 +58,7 @@ type CloudActiveDefenseReconciler struct {
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=namespaces,verbs=get
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list
 // +kubebuilder:rbac:groups=gateway.kyma-project.io,resources=apirules,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=security.istio.io,resources=authorizationpolicies,verbs=get;list;watch;create;update;patch;delete
 
@@ -97,6 +98,33 @@ func (r *CloudActiveDefenseReconciler) Reconcile(ctx context.Context, req ctrl.R
 			return ctrl.Result{}, err
 		}
 	}
+
+	// Resolve cluster domain if not provided
+	domain, err := util.GetClusterDomain(ctx, r.Client, cad.Spec.Domain)
+	if err != nil {
+		log.Error(err, "Failed to resolve cluster domain")
+		meta.SetStatusCondition(&cad.Status.Conditions, metav1.Condition{
+			Type:               "Degraded",
+			Status:             metav1.ConditionTrue,
+			Reason:             "DomainResolutionFailed",
+			Message:            err.Error(),
+			ObservedGeneration: cad.Generation,
+		})
+		_ = r.Status().Update(ctx, cad)
+		return ctrl.Result{}, err
+	}
+
+	// Store resolved domain in status for visibility
+	if cad.Status.ResolvedDomain != domain {
+		cad.Status.ResolvedDomain = domain
+		if err := r.Status().Update(ctx, cad); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Resolved cluster domain", "domain", domain)
+	}
+
+	// Use resolved domain in the cad spec for resource creation
+	cad.Spec.Domain = domain
 
 	// Reconcile all components in dependency order
 	reconcilers := []struct {
@@ -239,7 +267,7 @@ func (r *CloudActiveDefenseReconciler) ensureSecret(ctx context.Context, cad *op
 				// Not provided and not yet generated: create a random value
 				var generatedValue string
 				var err error
-				
+
 				// Check if this is a username field
 				if util.IsUsernameField(k) {
 					generatedValue, err = util.GenerateUsername("")
@@ -247,7 +275,7 @@ func (r *CloudActiveDefenseReconciler) ensureSecret(ctx context.Context, cad *op
 					// Generate password
 					generatedValue, err = util.GeneratePassword(32)
 				}
-				
+
 				if err != nil {
 					return fmt.Errorf("generating value for %s: %w", k, err)
 				}
@@ -414,7 +442,7 @@ func (r *CloudActiveDefenseReconciler) reconcileDeployments(ctx context.Context,
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("Deployment %s: %w", d.name, err)
+			return fmt.Errorf("deployment %s: %w", d.name, err)
 		}
 	}
 	return nil
@@ -452,7 +480,7 @@ func (r *CloudActiveDefenseReconciler) reconcileServices(ctx context.Context, ca
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("Service %s: %w", s.name, err)
+			return fmt.Errorf("service %s: %w", s.name, err)
 		}
 	}
 	return nil
